@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/tursodatabase/go-libsql"
 )
 
 type SQLiteRepository struct {
@@ -13,7 +13,8 @@ type SQLiteRepository struct {
 }
 
 func NewSQLiteRepository(dbPath string) (*SQLiteRepository, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	// Always use the correct path for the local file with libsql driver
+	db, err := sql.Open("libsql", "file:internal/infrastructure/database/zettl.db")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}

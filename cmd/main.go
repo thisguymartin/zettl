@@ -6,6 +6,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	domain "thisguymartin/zettl/internal/domain"
 )
 
 type model struct {
@@ -16,8 +18,23 @@ type model struct {
 }
 
 func initialModel() model {
+	repo, err := domain.NewSQLiteRepository("zettl.db")
+	if err != nil {
+		log.Fatalf("failed to initialize db: %v", err)
+	}
+
+	notes, err := repo.GetAll()
+	if err != nil {
+		log.Printf("failed to load notes: %v", err)
+	}
+
+	noteTitles := make([]string, len(notes))
+	for i, n := range notes {
+		noteTitles[i] = n.Title
+	}
+
 	return model{
-		notes:    []string{"Welcome to Zettl", "Your note-taking CLI"},
+		notes:    noteTitles,
 		selected: make(map[int]struct{}),
 		mode:     "view",
 	}
@@ -42,28 +59,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor++
 			}
 		case "enter", " ":
-			_, ok := m.selected[m.cursor]
-			if ok {
-				delete(m.selected, m.cursor)
-			} else {
-				m.selected[m.cursor] = struct{}{}
-			}
-		}
-	}
-	return m, nil
-}
-
-func (m model) View() string {
-	var style = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#FAFAFA")).
-		Background(lipgloss.Color("#7D56F4")).
-		PaddingTop(2).
-		PaddingLeft(4).
+			// Save a new note to the database when enter/space is pressed
 		Width(22)
 
 	header := style.Render("Zettl Notes")
-	
+
 	s := header + "\n\n"
 	s += "What would you like to do?\n\n"
 

@@ -58,3 +58,4 @@ temp/
 
 ## Additional files to ignore
 .claude
+bin 

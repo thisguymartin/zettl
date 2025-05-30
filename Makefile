@@ -1,5 +1,11 @@
+.PHONY: dev
+
 build:
-	go build -o bin/cli ./cmd/cli/main.go
+	@go build -o bin/cli ./cmd/cli/main.go
+
+dev:
+	@go run ./cmd/cli/main.go && ./air.toml
 
 run:
-	go run ./cmd/cli/main.go
+	@echo "Watching for changes..."
+	@air -c ./.air.toml 

@@ -1,4 +1,4 @@
-package domain
+package database
 
 import (
 	"database/sql"
@@ -6,6 +6,7 @@ import (
 	"time"
 
 	_ "github.com/tursodatabase/go-libsql"
+	"thisguymartin/zettl/internal/domain"
 )
 
 type SQLiteRepository struct {
@@ -13,8 +14,7 @@ type SQLiteRepository struct {
 }
 
 func NewSQLiteRepository(dbPath string) (*SQLiteRepository, error) {
-	// Always use the correct path for the local file with libsql driver
-	db, err := sql.Open("libsql", "file:internal/infrastructure/database/zettl.db")
+	db, err := sql.Open("libsql", "file:"+dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -42,7 +42,7 @@ func (r *SQLiteRepository) createTable() error {
 	return err
 }
 
-func (r *SQLiteRepository) Create(note *Note) error {
+func (r *SQLiteRepository) Create(note *domain.Note) error {
 	query := `
 	INSERT INTO notes (title, content, tags, created_at, updated_at)
 	VALUES (?, ?, ?, ?, ?)
@@ -64,7 +64,7 @@ func (r *SQLiteRepository) Create(note *Note) error {
 	return nil
 }
 
-func (r *SQLiteRepository) GetAll() ([]Note, error) {
+func (r *SQLiteRepository) GetAll() ([]domain.Note, error) {
 	query := `SELECT id, title, content, created_at, updated_at, tags FROM notes ORDER BY updated_at DESC`
 	rows, err := r.db.Query(query)
 	if err != nil {
@@ -72,9 +72,9 @@ func (r *SQLiteRepository) GetAll() ([]Note, error) {
 	}
 	defer rows.Close()
 
-	var notes []Note
+	var notes []domain.Note
 	for rows.Next() {
-		var note Note
+		var note domain.Note
 		err := rows.Scan(&note.ID, &note.Title, &note.Content, &note.CreatedAt, &note.UpdatedAt, &note.Tags)
 		if err != nil {
 			return nil, err
@@ -85,11 +85,11 @@ func (r *SQLiteRepository) GetAll() ([]Note, error) {
 	return notes, rows.Err()
 }
 
-func (r *SQLiteRepository) GetByID(id int) (*Note, error) {
+func (r *SQLiteRepository) GetByID(id int) (*domain.Note, error) {
 	query := `SELECT id, title, content, created_at, updated_at, tags FROM notes WHERE id = ?`
 	row := r.db.QueryRow(query, id)
 
-	var note Note
+	var note domain.Note
 	err := row.Scan(&note.ID, &note.Title, &note.Content, &note.CreatedAt, &note.UpdatedAt, &note.Tags)
 	if err != nil {
 		return nil, err
@@ -98,7 +98,7 @@ func (r *SQLiteRepository) GetByID(id int) (*Note, error) {
 	return &note, nil
 }
 
-func (r *SQLiteRepository) Update(note *Note) error {
+func (r *SQLiteRepository) Update(note *domain.Note) error {
 	query := `
 	UPDATE notes 
 	SET title = ?, content = ?, tags = ?, updated_at = ?
@@ -115,7 +115,7 @@ func (r *SQLiteRepository) Delete(id int) error {
 	return err
 }
 
-func (r *SQLiteRepository) Search(query string) ([]Note, error) {
+func (r *SQLiteRepository) Search(query string) ([]domain.Note, error) {
 	searchQuery := `
 	SELECT id, title, content, created_at, updated_at, tags 
 	FROM notes 
@@ -129,9 +129,9 @@ func (r *SQLiteRepository) Search(query string) ([]Note, error) {
 	}
 	defer rows.Close()
 
-	var notes []Note
+	var notes []domain.Note
 	for rows.Next() {
-		var note Note
+		var note domain.Note
 		err := rows.Scan(&note.ID, &note.Title, &note.Content, &note.CreatedAt, &note.UpdatedAt, &note.Tags)
 		if err != nil {
 			return nil, err

@@ -54,6 +54,41 @@ func (m UIModel) Init() tea.Cmd {
 	return nil
 }
 
+func (m UIModel) View() string {
+	switch m.currentWindow {
+	case MainMenuWindow:
+		return m.viewMainMenu()
+	case NoteListWindow:
+		return m.viewNoteList()
+	case NoteEditWindow:
+		return m.viewNoteEdit()
+	case SearchWindow:
+		return m.viewSearch()
+	}
+	return ""
+}
+
+func (m UIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		return m, nil
+	case tea.KeyMsg:
+		switch m.currentWindow {
+		case MainMenuWindow:
+			return m.updateMainMenu(msg)
+		case NoteListWindow:
+			return m.updateNoteList(msg)
+		case NoteEditWindow:
+			return m.updateNoteEdit(msg)
+		case SearchWindow:
+			return m.updateSearch(msg)
+		}
+	}
+	return m, nil
+}
+
 func (m *UIModel) refreshNotes() {
 	notes, err := m.repo.GetAll()
 	if err != nil {
@@ -80,27 +115,6 @@ func (m *UIModel) applyFilter() {
 		}
 	}
 	m.filteredNotes = filtered
-}
-
-func (m UIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		return m, nil
-	case tea.KeyMsg:
-		switch m.currentWindow {
-		case MainMenuWindow:
-			return m.updateMainMenu(msg)
-		case NoteListWindow:
-			return m.updateNoteList(msg)
-		case NoteEditWindow:
-			return m.updateNoteEdit(msg)
-		case SearchWindow:
-			return m.updateSearch(msg)
-		}
-	}
-	return m, nil
 }
 
 func (m UIModel) updateMainMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -189,6 +203,8 @@ func (m UIModel) updateNoteEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.noteContent += "\n"
 	case "tab":
 		m.noteContent += "    "
+	case " ":
+		m.noteContent += " "
 	default:
 		if msg.Type == tea.KeyRunes {
 			m.noteContent += msg.String()
@@ -239,20 +255,6 @@ func (m UIModel) saveNote() (tea.Model, tea.Cmd) {
 	m.refreshNotes()
 	m.currentWindow = NoteListWindow
 	return m, nil
-}
-
-func (m UIModel) View() string {
-	switch m.currentWindow {
-	case MainMenuWindow:
-		return m.viewMainMenu()
-	case NoteListWindow:
-		return m.viewNoteList()
-	case NoteEditWindow:
-		return m.viewNoteEdit()
-	case SearchWindow:
-		return m.viewSearch()
-	}
-	return ""
 }
 
 func (m UIModel) viewMainMenu() string {
@@ -329,7 +331,7 @@ func (m UIModel) viewNoteList() string {
 	}
 
 	footer := "\n↑/↓ Navigate • Enter: Open • /: Search • Esc: Back"
-	
+
 	return lipgloss.JoinVertical(lipgloss.Left, header, strings.Join(notes, "\n"), footer)
 }
 
@@ -349,7 +351,7 @@ func (m UIModel) viewSearch() string {
 
 	header := headerStyle.Render("🔍 Search Notes")
 	searchBox := searchStyle.Render(fmt.Sprintf("Search: %s|", m.searchQuery))
-	
+
 	results := fmt.Sprintf("Found %d notes", len(m.filteredNotes))
 	footer := "\nType to search • Enter: View results • Esc: Back"
 

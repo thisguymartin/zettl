@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"time"
 
+	domain "thisguymartin/zettl/internal/ui"
+
 	_ "github.com/tursodatabase/go-libsql"
-	"thisguymartin/zettl/internal/domain"
 )
 
 type SQLiteRepository struct {

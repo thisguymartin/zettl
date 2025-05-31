@@ -5,8 +5,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"thisguymartin/zettl/internal/domain"
 	"thisguymartin/zettl/internal/infrastructure/database"
+	ui "thisguymartin/zettl/internal/ui"
 )
 
 func main() {
@@ -15,7 +15,7 @@ func main() {
 		log.Fatalf("failed to initialize db: %v", err)
 	}
 
-	model, err := domain.NewUIModel(repo)
+	model, err := ui.NewUIModel(repo)
 	if err != nil {
 		log.Fatalf("failed to initialize UI model: %v", err)
 	}

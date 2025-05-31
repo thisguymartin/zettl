@@ -26,10 +26,6 @@ tmp_dir = "tmp"
   rerun_delay = 500
   send_interrupt = false
   stop_on_error = false
-  run_on_start = true
-
-[run]
-  cmd = "./tmp/main"
 
 [color]
   app = "blue"

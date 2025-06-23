@@ -1,60 +1,21 @@
-package domain
+package internal
 
 import (
 	"fmt"
-	"github.com/charmbracelet/log"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/log"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-type WindowType int
-
-const (
-	MainMenuWindow WindowType = iota
-	NoteListWindow
-	NoteEditWindow
-	SearchWindow
-)
-
-type UIModel struct {
-	currentWindow WindowType
-	notes         []Note
-	filteredNotes []Note
-	cursor        int
-	searchQuery   string
-	noteContent   string
-	noteTitle     string
-	selectedNote  *Note
-	repo          NoteRepository
-	width         int
-	height        int
-}
-
-func NewUIModel(repo NoteRepository) (*UIModel, error) {
-	notes, err := repo.GetAll()
-	if err != nil {
-		log.Error("failed to get notes: %v", "error", err)
-		notes = []Note{}
-	}
-
-	return &UIModel{
-		currentWindow: MainMenuWindow,
-		notes:         notes,
-		filteredNotes: notes,
-		repo:          repo,
-		width:         80,
-		height:        24,
-	}, nil
-}
-
-func (m UIModel) Init() tea.Cmd {
+func (m App) Init() tea.Cmd {
 	return nil
 }
 
-func (m UIModel) View() string {
+func (m App) View() string {
 	switch m.currentWindow {
 	case MainMenuWindow:
 		return m.viewMainMenu()
@@ -68,7 +29,7 @@ func (m UIModel) View() string {
 	return ""
 }
 
-func (m UIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -89,8 +50,8 @@ func (m UIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *UIModel) refreshNotes() {
-	notes, err := m.repo.GetAll()
+func (m *App) refreshNotes() {
+	notes, err := m.noteRepository.GetAll()
 	if err != nil {
 		log.Printf("failed to refresh notes: %v", err)
 		return
@@ -99,7 +60,7 @@ func (m *UIModel) refreshNotes() {
 	m.applyFilter()
 }
 
-func (m *UIModel) applyFilter() {
+func (m *App) applyFilter() {
 	if m.searchQuery == "" {
 		m.filteredNotes = m.notes
 		return
@@ -117,7 +78,7 @@ func (m *UIModel) applyFilter() {
 	m.filteredNotes = filtered
 }
 
-func (m UIModel) updateMainMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m App) updateMainMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
@@ -125,7 +86,7 @@ func (m UIModel) updateMainMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.currentWindow = NoteEditWindow
 		m.noteTitle = ""
 		m.noteContent = ""
-		m.selectedNote = nil
+		m.selectedNote = Note{}
 	case "2", "l":
 		m.currentWindow = NoteListWindow
 		m.cursor = 0
@@ -137,7 +98,7 @@ func (m UIModel) updateMainMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m UIModel) updateNoteList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m App) updateNoteList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q", "esc":
 		m.currentWindow = MainMenuWindow
@@ -151,7 +112,7 @@ func (m UIModel) updateNoteList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "enter":
 		if len(m.filteredNotes) > 0 && m.cursor < len(m.filteredNotes) {
-			m.selectedNote = &m.filteredNotes[m.cursor]
+			m.selectedNote = m.filteredNotes[m.cursor]
 			m.noteTitle = m.selectedNote.Title
 			m.noteContent = m.selectedNote.Content
 			m.currentWindow = NoteEditWindow
@@ -163,7 +124,7 @@ func (m UIModel) updateNoteList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m UIModel) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m App) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "esc":
 		m.currentWindow = NoteListWindow
@@ -187,7 +148,7 @@ func (m UIModel) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m UIModel) updateNoteEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m App) updateNoteEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
@@ -213,7 +174,7 @@ func (m UIModel) updateNoteEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m UIModel) saveNote() (tea.Model, tea.Cmd) {
+func (m App) saveNote() (tea.Model, tea.Cmd) {
 	if m.noteContent == "" {
 		return m, nil
 	}
@@ -230,23 +191,23 @@ func (m UIModel) saveNote() (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.selectedNote != nil {
+	if m.selectedNote != (Note{}) {
 		m.selectedNote.Title = m.noteTitle
 		m.selectedNote.Content = m.noteContent
 		m.selectedNote.UpdatedAt = time.Now()
-		err := m.repo.Update(m.selectedNote)
+		err := m.noteRepository.Update(m.selectedNote)
 		if err != nil {
 			log.Printf("failed to update note: %v", err)
 		}
 	} else {
-		note := &Note{
+		note := Note{
 			Title:     m.noteTitle,
 			Content:   m.noteContent,
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 			Tags:      "notebook",
 		}
-		err := m.repo.Create(note)
+		err := m.noteRepository.Create(note)
 		if err != nil {
 			log.Printf("failed to create note: %v", err)
 		}
@@ -257,18 +218,25 @@ func (m UIModel) saveNote() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m UIModel) viewMainMenu() string {
+func (m App) viewMainMenu() string {
 
 	headerStyle := lipgloss.NewStyle().AlignVertical(lipgloss.Center).
 		Width(m.width).
 		Align(lipgloss.Center).
 		Bold(true).
 		Foreground(lipgloss.Color("#FAFAFA")).
-		Background(lipgloss.Color("#7D56F4")).
 		Padding(1, 2).
 		MarginBottom(1).
 		Width(m.width).
-		Render("Zettl")
+		Render(`
+╔══════════════════════════════════════════════════════════════╗
+║  			███████╗███████╗████████╗████████╗██╗         	  ║
+║  			╚══███╔╝██╔════╝╚══██╔══╝╚══██╔══╝██║         	  ║
+║  			  ███╔╝ █████╗     ██║      ██║   ██║         	  ║
+║  			 ███╔╝  ██╔══╝     ██║      ██║   ██║         	  ║
+║  			███████╗███████╗   ██║      ██║   ███████╗    	  ║
+║  			╚══════╝╚══════╝   ╚═╝      ╚═╝   ╚══════╝    	  ║
+╚══════════════════════════════════════════════════════════════╝`)
 
 	menuStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -289,7 +257,7 @@ Press 'q' to quit.`)
 	return lipgloss.JoinVertical(lipgloss.Left, headerStyle, menu)
 }
 
-func (m UIModel) viewNoteList() string {
+func (m App) viewNoteList() string {
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#FAFAFA")).
@@ -339,7 +307,7 @@ func (m UIModel) viewNoteList() string {
 	return lipgloss.JoinVertical(lipgloss.Left, header, strings.Join(notes, "\n"), footer)
 }
 
-func (m UIModel) viewSearch() string {
+func (m App) viewSearch() string {
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#FAFAFA")).
@@ -362,7 +330,7 @@ func (m UIModel) viewSearch() string {
 	return lipgloss.JoinVertical(lipgloss.Left, header, searchBox, results, footer)
 }
 
-func (m UIModel) viewNoteEdit() string {
+func (m App) viewNoteEdit() string {
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#FAFAFA")).
@@ -378,7 +346,7 @@ func (m UIModel) viewNoteEdit() string {
 		Height(m.height - 8)
 
 	var title string
-	if m.selectedNote != nil {
+	if m.selectedNote != (Note{}) {
 		title = fmt.Sprintf("✏️  Editing: %s", m.selectedNote.Title)
 	} else {
 		title = "✏️  New Note"

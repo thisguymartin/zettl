@@ -40,8 +40,8 @@ go mod tidy
 
 ## Project Structure
 - `cmd/main.go` — Main TUI application
-- `internal/domain/note.go` — Note model and repository interface
-- `internal/domain/database.go` — SQLite repository implementation
+- `internal/internal/note.go` — Note model and repository interface
+- `internal/internal/database.go` — SQLite repository implementation
 
 ## License
 MIT

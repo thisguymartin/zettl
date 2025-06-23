@@ -2,9 +2,10 @@ package domain
 
 import (
 	"fmt"
-	"github.com/charmbracelet/log"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/log"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -264,11 +265,18 @@ func (m UIModel) viewMainMenu() string {
 		Align(lipgloss.Center).
 		Bold(true).
 		Foreground(lipgloss.Color("#FAFAFA")).
-		Background(lipgloss.Color("#7D56F4")).
 		Padding(1, 2).
 		MarginBottom(1).
 		Width(m.width).
-		Render("Zettl")
+		Render(`
+╔══════════════════════════════════════════════════════════════╗
+║  			███████╗███████╗████████╗████████╗██╗         	  ║
+║  			╚══███╔╝██╔════╝╚══██╔══╝╚══██╔══╝██║         	  ║
+║  			  ███╔╝ █████╗     ██║      ██║   ██║         	  ║
+║  			 ███╔╝  ██╔══╝     ██║      ██║   ██║         	  ║
+║  			███████╗███████╗   ██║      ██║   ███████╗    	  ║
+║  			╚══════╝╚══════╝   ╚═╝      ╚═╝   ╚══════╝    	  ║
+╚══════════════════════════════════════════════════════════════╝`)
 
 	menuStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).

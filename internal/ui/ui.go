@@ -2,7 +2,7 @@ package domain
 
 import (
 	"fmt"
-	"log"
+	"github.com/charmbracelet/log"
 	"strings"
 	"time"
 
@@ -36,7 +36,7 @@ type UIModel struct {
 func NewUIModel(repo NoteRepository) (*UIModel, error) {
 	notes, err := repo.GetAll()
 	if err != nil {
-		log.Printf("failed to load notes: %v", err)
+		log.Error("failed to get notes: %v", "error", err)
 		notes = []Note{}
 	}
 
@@ -258,20 +258,24 @@ func (m UIModel) saveNote() (tea.Model, tea.Cmd) {
 }
 
 func (m UIModel) viewMainMenu() string {
-	headerStyle := lipgloss.NewStyle().
+
+	headerStyle := lipgloss.NewStyle().AlignVertical(lipgloss.Center).
+		Width(m.width).
+		Align(lipgloss.Center).
 		Bold(true).
 		Foreground(lipgloss.Color("#FAFAFA")).
 		Background(lipgloss.Color("#7D56F4")).
 		Padding(1, 2).
-		MarginBottom(1)
+		MarginBottom(1).
+		Width(m.width).
+		Render("Zettl")
 
 	menuStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#7D56F4")).
 		Padding(1, 2).
-		MarginTop(1)
-
-	header := headerStyle.Render("📝 Zettl Notebook")
+		MarginTop(1).
+		Align(lipgloss.Center)
 
 	menu := menuStyle.Render(`Welcome to your digital notebook!
 
@@ -282,7 +286,7 @@ func (m UIModel) viewMainMenu() string {
 Press the number or letter key to navigate.
 Press 'q' to quit.`)
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, menu)
+	return lipgloss.JoinVertical(lipgloss.Left, headerStyle, menu)
 }
 
 func (m UIModel) viewNoteList() string {

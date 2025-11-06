@@ -5,10 +5,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/log"
-
+	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/log"
 )
 
 type WindowType int
@@ -40,6 +43,13 @@ type UIModel struct {
 	isProcessing bool
 	errorMsg     string
 	aiService    interface{} // Will hold *ai.AIService
+	// Bubbles components
+	textarea    textarea.Model
+	textinput   textinput.Model
+	chatinput   textinput.Model
+	searchinput textinput.Model
+	spinner     spinner.Model
+	notesList   list.Model
 }
 
 func NewUIModel(repo NoteRepository) (*UIModel, error) {
@@ -49,6 +59,40 @@ func NewUIModel(repo NoteRepository) (*UIModel, error) {
 		notes = []Note{}
 	}
 
+	// Initialize textarea for note editing
+	ta := textarea.New()
+	ta.Placeholder = "Start typing your note..."
+	ta.Focus()
+	ta.CharLimit = 10000
+	ta.SetWidth(80)
+	ta.SetHeight(20)
+	ta.ShowLineNumbers = false
+	ta.KeyMap.InsertNewline.SetEnabled(true)
+
+	// Initialize text input for title
+	ti := textinput.New()
+	ti.Placeholder = "Note title (optional)"
+	ti.CharLimit = 200
+	ti.Width = 80
+
+	// Initialize chat input
+	ci := textinput.New()
+	ci.Placeholder = "Type your message..."
+	ci.CharLimit = 500
+	ci.Width = 80
+
+	// Initialize search input
+	si := textinput.New()
+	si.Placeholder = "Search notes..."
+	si.CharLimit = 100
+	si.Width = 80
+	si.Focus()
+
+	// Initialize spinner
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+
 	return &UIModel{
 		currentWindow: MainMenuWindow,
 		notes:         notes,
@@ -57,6 +101,11 @@ func NewUIModel(repo NoteRepository) (*UIModel, error) {
 		width:         80,
 		height:        24,
 		chatHistory:   []ChatMessage{},
+		textarea:      ta,
+		textinput:     ti,
+		chatinput:     ci,
+		searchinput:   si,
+		spinner:       s,
 	}, nil
 }
 
@@ -66,7 +115,10 @@ func (m *UIModel) SetAIService(service interface{}) {
 }
 
 func (m UIModel) Init() tea.Cmd {
-	return nil
+	return tea.Batch(
+		m.spinner.Tick,
+		textarea.Blink,
+	)
 }
 
 func (m UIModel) View() string {
@@ -88,12 +140,36 @@ func (m UIModel) View() string {
 }
 
 func (m UIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	var cmds []tea.Cmd
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.textarea.SetWidth(msg.Width - 8)
+		m.textarea.SetHeight(msg.Height - 12)
 		return m, nil
+
+	case spinner.TickMsg:
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+
 	case tea.KeyMsg:
+		// Update bubbles components based on current window
+		switch m.currentWindow {
+		case NoteEditWindow:
+			m.textarea, cmd = m.textarea.Update(msg)
+			cmds = append(cmds, cmd)
+		case SearchWindow:
+			m.searchinput, cmd = m.searchinput.Update(msg)
+			cmds = append(cmds, cmd)
+		case ChatWindow:
+			m.chatinput, cmd = m.chatinput.Update(msg)
+			cmds = append(cmds, cmd)
+		}
+
+		// Handle window-specific key bindings
 		switch m.currentWindow {
 		case MainMenuWindow:
 			return m.updateMainMenu(msg)
@@ -109,7 +185,8 @@ func (m UIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateAIMenu(msg)
 		}
 	}
-	return m, nil
+
+	return m, tea.Batch(cmds...)
 }
 
 func (m *UIModel) refreshNotes() {
@@ -194,22 +271,17 @@ func (m UIModel) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c", "esc":
 		m.currentWindow = NoteListWindow
 		m.searchQuery = ""
+		m.searchinput.SetValue("")
 		m.applyFilter()
 	case "enter":
+		m.searchQuery = m.searchinput.Value()
 		m.currentWindow = NoteListWindow
 		m.cursor = 0
 		m.applyFilter()
-	case "backspace", "ctrl+h":
-		if len(m.searchQuery) > 0 {
-			m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
-			m.applyFilter()
-		}
-	default:
-		if msg.Type == tea.KeyRunes {
-			m.searchQuery += msg.String()
-			m.applyFilter()
-		}
 	}
+	// Sync search query with textinput value and apply filter on every change
+	m.searchQuery = m.searchinput.Value()
+	m.applyFilter()
 	return m, nil
 }
 
@@ -219,23 +291,16 @@ func (m UIModel) updateNoteEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "esc":
 		m.currentWindow = NoteListWindow
+		m.noteContent = "" // Clear on cancel
+		m.textarea.Reset()
 	case "ctrl+s":
+		// Get content from textarea before saving
+		m.noteContent = m.textarea.Value()
 		return m.saveNote()
-	case "backspace", "ctrl+h":
-		if len(m.noteContent) > 0 {
-			m.noteContent = m.noteContent[:len(m.noteContent)-1]
-		}
-	case "enter":
-		m.noteContent += "\n"
-	case "tab":
-		m.noteContent += "    "
-	case " ":
-		m.noteContent += " "
-	default:
-		if msg.Type == tea.KeyRunes {
-			m.noteContent += msg.String()
-		}
 	}
+	// Textarea handles all other input via Update() in the main Update function
+	// Just sync the noteContent with textarea value
+	m.noteContent = m.textarea.Value()
 	return m, nil
 }
 
@@ -284,189 +349,237 @@ func (m UIModel) saveNote() (tea.Model, tea.Cmd) {
 }
 
 func (m UIModel) viewMainMenu() string {
+	// Modern logo with gradient effect
+	logo := logoStyle.Render(`
+╭─────────────────────────────────────────────╮
+│                                             │
+│     ███████╗███████╗████████╗████████╗██╗  │
+│     ╚══███╔╝██╔════╝╚══██╔══╝╚══██╔══╝██║  │
+│       ███╔╝ █████╗     ██║      ██║   ██║  │
+│      ███╔╝  ██╔══╝     ██║      ██║   ██║  │
+│     ███████╗███████╗   ██║      ██║   ███╗ │
+│     ╚══════╝╚══════╝   ╚═╝      ╚═╝   ╚══╝ │
+│                                             │
+╰─────────────────────────────────────────────╯`)
 
-	headerStyle := lipgloss.NewStyle().AlignVertical(lipgloss.Center).
+	title := bigTitleStyle.Width(m.width - 4).Align(lipgloss.Center).Render("✨ AI-Powered Note Taking ✨")
+
+	// Menu items with modern styling
+	menuItems := []string{
+		renderKeyHelp("n/1", "New Note") + "     " + infoStyle.Render("Create a new note"),
+		renderKeyHelp("l/2", "List Notes") + "   " + infoStyle.Render("Browse existing notes"),
+		renderKeyHelp("s/3", "Search") + "       " + infoStyle.Render("Find notes instantly"),
+		renderKeyHelp("a/4", "AI Features") + "  " + successStyle.Render("✨ Chat & Semantic Search"),
+	}
+
+	menuCard := cardStyle.
+		Width(m.width - 6).
+		Align(lipgloss.Center).
+		Render(strings.Join(menuItems, "\n\n"))
+
+	// Help text
+	help := helpStyle.Render("Press the corresponding key to navigate • Press 'q' to quit")
+
+	return lipgloss.NewStyle().
 		Width(m.width).
 		Align(lipgloss.Center).
-		Bold(true).
-		Foreground(lipgloss.Color("#FAFAFA")).
-		Padding(1, 2).
-		MarginBottom(1).
-		Width(m.width).
-		Render(`
-╔══════════════════════════════════════════════════════════════╗
-║  			███████╗███████╗████████╗████████╗██╗         	  ║
-║  			╚══███╔╝██╔════╝╚══██╔══╝╚══██╔══╝██║         	  ║
-║  			  ███╔╝ █████╗     ██║      ██║   ██║         	  ║
-║  			 ███╔╝  ██╔══╝     ██║      ██║   ██║         	  ║
-║  			███████╗███████╗   ██║      ██║   ███████╗    	  ║
-║  			╚══════╝╚══════╝   ╚═╝      ╚═╝   ╚══════╝    	  ║
-╚══════════════════════════════════════════════════════════════╝`)
-
-	menuStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#7D56F4")).
-		Padding(1, 2).
-		MarginTop(1).
-		Align(lipgloss.Center)
-
-	menu := menuStyle.Render(`Welcome to your digital notebook!
-
-1. New Note (n)     - Create a new note
-2. List Notes (l)   - Browse existing notes
-3. Search (s)       - Find notes with fuzzy search
-4. AI Features (a)  - Chat, embeddings, and semantic search
-
-Press the number or letter key to navigate.
-Press 'q' to quit.`)
-
-	return lipgloss.JoinVertical(lipgloss.Left, headerStyle, menu)
+		Render(lipgloss.JoinVertical(lipgloss.Center,
+			"",
+			logo,
+			"",
+			title,
+			"",
+			menuCard,
+			"",
+			help,
+		))
 }
 
 func (m UIModel) viewNoteList() string {
-	headerStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#FAFAFA")).
-		Background(lipgloss.Color("#7D56F4")).
-		Padding(0, 2).
-		MarginBottom(1)
-
-	noteStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#7D56F4")).
-		Padding(1, 2).
-		Width(m.width - 4)
-
-	selectedStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#FF6B6B")).
-		Background(lipgloss.Color("#2A2A2A")).
-		Padding(1, 2).
-		Width(m.width - 4)
-
-	header := headerStyle.Render(fmt.Sprintf("📚 Notes (%d)", len(m.filteredNotes)))
+	header := headerStyle.Render(fmt.Sprintf("📚 Notes %s", renderBadge(fmt.Sprintf("%d", len(m.filteredNotes)))))
 
 	if len(m.filteredNotes) == 0 {
-		empty := noteStyle.Render("No notes found. Press 'Esc' to go back or '/' to search.")
-		return lipgloss.JoinVertical(lipgloss.Left, header, empty)
+		empty := cardStyle.
+			Width(m.width - 6).
+			Align(lipgloss.Center).
+			Render(warningStyle.Render("No notes found") + "\n\n" + helpStyle.Render("Press 'Esc' to go back or '/' to search"))
+		return lipgloss.JoinVertical(lipgloss.Left, header, "", empty)
 	}
 
 	var notes []string
-	for i, note := range m.filteredNotes {
-		dateStr := note.CreatedAt.Format("Jan 2, 2006 15:04")
-		preview := strings.ReplaceAll(note.Content, "\n", " ")
-		if len(preview) > 60 {
-			preview = preview[:60] + "..."
+	visibleStart := 0
+	visibleEnd := len(m.filteredNotes)
+	maxVisible := (m.height - 10) / 6 // Approximate notes that fit
+
+	if maxVisible > 0 && len(m.filteredNotes) > maxVisible {
+		if m.cursor > maxVisible/2 {
+			visibleStart = m.cursor - maxVisible/2
 		}
-
-		content := fmt.Sprintf("📄 %s\n🕒 %s\n💭 %s", note.Title, dateStr, preview)
-
-		if i == m.cursor {
-			notes = append(notes, selectedStyle.Render(content))
-		} else {
-			notes = append(notes, noteStyle.Render(content))
+		visibleEnd = visibleStart + maxVisible
+		if visibleEnd > len(m.filteredNotes) {
+			visibleEnd = len(m.filteredNotes)
+			visibleStart = visibleEnd - maxVisible
+			if visibleStart < 0 {
+				visibleStart = 0
+			}
 		}
 	}
 
-	footer := "\n↑/↓ Navigate • Enter: Open • /: Search • Esc: Back"
+	for i := visibleStart; i < visibleEnd; i++ {
+		note := m.filteredNotes[i]
+		dateStr := note.CreatedAt.Format("Jan 2, 2006 15:04")
+		preview := strings.ReplaceAll(note.Content, "\n", " ")
+		if len(preview) > 80 {
+			preview = preview[:80] + "..."
+		}
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, strings.Join(notes, "\n"), footer)
+		titleLine := titleStyle.Render("📄 " + note.Title)
+		dateLine := helpStyle.Render("🕒 " + dateStr)
+		previewLine := infoStyle.Render("💭 " + preview)
+
+		content := lipgloss.JoinVertical(lipgloss.Left, titleLine, dateLine, previewLine)
+
+		if i == m.cursor {
+			notes = append(notes, activeCardStyle.Width(m.width-6).Render(content))
+		} else {
+			notes = append(notes, cardStyle.Width(m.width-6).Render(content))
+		}
+	}
+
+	// Help footer
+	helpKeys := []string{
+		renderKeyHelp("↑↓/jk", "Navigate"),
+		renderKeyHelp("Enter", "Open"),
+		renderKeyHelp("/", "Search"),
+		renderKeyHelp("Esc", "Back"),
+	}
+	footer := helpStyle.Render(strings.Join(helpKeys, " • "))
+
+	return lipgloss.JoinVertical(lipgloss.Left, header, "", strings.Join(notes, "\n"), "", footer)
 }
 
 func (m UIModel) viewSearch() string {
-	headerStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#FAFAFA")).
-		Background(lipgloss.Color("#7D56F4")).
-		Padding(0, 2).
-		MarginBottom(1)
-
-	searchStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#FFD700")).
-		Padding(1, 2).
-		Width(m.width - 4)
-
 	header := headerStyle.Render("🔍 Search Notes")
-	searchBox := searchStyle.Render(fmt.Sprintf("Search: %s|", m.searchQuery))
 
-	results := fmt.Sprintf("Found %d notes", len(m.filteredNotes))
-	footer := "\nType to search • Enter: View results • Esc: Back"
+	// Update search input value
+	m.searchinput.SetValue(m.searchQuery)
+	m.searchinput.Width = m.width - 10
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, searchBox, results, footer)
+	searchBox := focusedInputStyle.
+		Width(m.width - 6).
+		Render(m.searchinput.View())
+
+	resultsText := ""
+	if len(m.searchQuery) > 0 {
+		if len(m.filteredNotes) > 0 {
+			resultsText = successStyle.Render(fmt.Sprintf("✓ Found %d notes", len(m.filteredNotes)))
+		} else {
+			resultsText = warningStyle.Render("No notes found")
+		}
+	} else {
+		resultsText = helpStyle.Render("Start typing to search...")
+	}
+
+	// Help footer
+	helpKeys := []string{
+		renderKeyHelp("Type", "Search"),
+		renderKeyHelp("Enter", "View Results"),
+		renderKeyHelp("Esc", "Back"),
+	}
+	footer := helpStyle.Render(strings.Join(helpKeys, " • "))
+
+	return lipgloss.JoinVertical(lipgloss.Left,
+		header,
+		"",
+		searchBox,
+		"",
+		resultsText,
+		"",
+		footer,
+	)
 }
 
 func (m UIModel) viewNoteEdit() string {
-	headerStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#FAFAFA")).
-		Background(lipgloss.Color("#7D56F4")).
-		Padding(0, 2).
-		MarginBottom(1)
-
-	editorStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#32CD32")).
-		Padding(1, 2).
-		Width(m.width - 4).
-		Height(m.height - 8)
-
-	var title string
+	var titleText string
 	if m.selectedNote != nil {
-		title = fmt.Sprintf("✏️  Editing: %s", m.selectedNote.Title)
+		titleText = fmt.Sprintf("✏️  Editing: %s", renderBadge(m.selectedNote.Title))
 	} else {
-		title = "✏️  New Note"
+		titleText = "✏️  " + successStyle.Render("New Note")
 	}
 
-	header := headerStyle.Render(title)
+	header := headerStyle.Render(titleText)
 
-	content := m.noteContent + "█"
-	if len(m.noteContent) == 0 {
-		content = "Start typing your note...\n\n█"
+	// Update textarea with current content
+	if m.textarea.Value() != m.noteContent {
+		m.textarea.SetValue(m.noteContent)
 	}
 
-	editor := editorStyle.Render(content)
-	footer := "\nCtrl+S: Save • Esc: Back • Enter: New line • Tab: Indent"
+	// Style the textarea container
+	editorBox := focusedInputStyle.
+		Width(m.width - 6).
+		Render(m.textarea.View())
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, editor, footer)
+	// Help footer with modern key hints
+	helpKeys := []string{
+		renderKeyHelp("Ctrl+S", "Save"),
+		renderKeyHelp("Esc", "Cancel"),
+		renderKeyHelp("Tab", "Indent"),
+	}
+	footer := helpStyle.Render(strings.Join(helpKeys, " • "))
+
+	// Word count
+	wordCount := len(strings.Fields(m.noteContent))
+	charCount := len(m.noteContent)
+	stats := helpStyle.Render(fmt.Sprintf("📊 %d words • %d characters", wordCount, charCount))
+
+	return lipgloss.JoinVertical(lipgloss.Left,
+		header,
+		"",
+		editorBox,
+		"",
+		stats,
+		footer,
+	)
 }
 
 func (m UIModel) viewAIMenu() string {
-	headerStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#FAFAFA")).
-		Background(lipgloss.Color("#7D56F4")).
-		Padding(0, 2).
-		MarginBottom(1)
+	header := headerStyle.Render("🤖 AI Features " + successStyle.Render("✨"))
 
-	menuStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#00D9FF")).
-		Padding(1, 2).
-		MarginTop(1).
-		Align(lipgloss.Center)
-
-	header := headerStyle.Render("🤖 AI Features")
-
-	menu := menuStyle.Render(`AI-Powered Features:
-
-1. Chat (c)              - Chat with AI about your notes
-2. Generate Embeddings   - Create embeddings for semantic search
-3. Semantic Search       - Find similar notes using AI
-4. Clear Chat History    - Reset conversation
-
-Press the number or letter key to navigate.
-Press 'Esc' to go back.`)
-
-	if m.errorMsg != "" {
-		errorStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FF6B6B")).
-			Padding(1, 2)
-		error := errorStyle.Render("⚠️  " + m.errorMsg)
-		return lipgloss.JoinVertical(lipgloss.Left, header, menu, error)
+	// Menu items with modern styling
+	menuItems := []string{
+		renderKeyHelp("c/1", "Chat") + "              " + infoStyle.Render("Chat with AI about your notes"),
+		renderKeyHelp("2", "Generate Embeddings") + " " + infoStyle.Render("Create vectors for semantic search"),
+		renderKeyHelp("3", "Semantic Search") + "    " + infoStyle.Render("Find similar notes using AI"),
+		renderKeyHelp("4", "Clear Chat History") + " " + warningStyle.Render("Reset conversation"),
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, menu)
+	menuCard := cardStyle.
+		Width(m.width - 6).
+		Align(lipgloss.Left).
+		Render(strings.Join(menuItems, "\n\n"))
+
+	// Status message if any
+	statusMsg := ""
+	if m.errorMsg != "" {
+		if strings.Contains(m.errorMsg, "cleared") || strings.Contains(m.errorMsg, "success") {
+			statusMsg = successStyle.Render("✓ " + m.errorMsg)
+		} else if strings.Contains(m.errorMsg, "coming soon") {
+			statusMsg = infoStyle.Render("ℹ " + m.errorMsg)
+		} else {
+			statusMsg = errorStyle.Render("✗ " + m.errorMsg)
+		}
+	}
+
+	// Help footer
+	footer := helpStyle.Render("Press the number or letter key • Press 'Esc' to go back")
+
+	parts := []string{header, "", menuCard}
+	if statusMsg != "" {
+		parts = append(parts, "", statusMsg)
+	}
+	parts = append(parts, "", footer)
+
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
 func (m UIModel) updateAIMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -503,63 +616,84 @@ func (m UIModel) updateAIMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m UIModel) viewChat() string {
-	headerStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#FAFAFA")).
-		Background(lipgloss.Color("#7D56F4")).
-		Padding(0, 2).
-		MarginBottom(1)
+	header := headerStyle.Render("💬 AI Chat " + renderBadge(fmt.Sprintf("%d msgs", len(m.chatHistory))))
 
-	chatStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#00D9FF")).
-		Padding(1, 2).
-		Width(m.width - 4).
-		Height(m.height - 12)
-
-	inputStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#32CD32")).
-		Padding(1, 2).
-		Width(m.width - 4)
-
-	header := headerStyle.Render("💬 AI Chat")
-
-	// Render chat history
-	var chatContent strings.Builder
+	// Render chat history with modern styling
+	var chatMessages []string
 	if len(m.chatHistory) == 0 {
-		chatContent.WriteString("No messages yet. Start a conversation!\n\n")
-		chatContent.WriteString("Tip: The AI has access to your notes for context.")
+		emptyMsg := cardStyle.
+			Width(m.width - 6).
+			Align(lipgloss.Center).
+			Render(infoStyle.Render("No messages yet. Start a conversation!") + "\n\n" +
+				helpStyle.Render("💡 Tip: The AI has access to your notes for context"))
+		chatMessages = append(chatMessages, emptyMsg)
 	} else {
-		for _, msg := range m.chatHistory {
-			role := "You"
+		// Show last N messages that fit
+		maxMessages := (m.height - 15) / 4
+		startIdx := 0
+		if len(m.chatHistory) > maxMessages {
+			startIdx = len(m.chatHistory) - maxMessages
+		}
+
+		for i := startIdx; i < len(m.chatHistory); i++ {
+			msg := m.chatHistory[i]
+			var msgStyle lipgloss.Style
+			var roleText string
+
 			if msg.Role == "assistant" {
-				role = "AI"
+				msgStyle = cardStyle.BorderForeground(colorSecondary)
+				roleText = successStyle.Render("🤖 AI")
+			} else {
+				msgStyle = cardStyle.BorderForeground(colorPrimary)
+				roleText = titleStyle.Render("👤 You")
 			}
-			chatContent.WriteString(fmt.Sprintf("[%s]: %s\n\n", role, msg.Content))
+
+			content := lipgloss.JoinVertical(lipgloss.Left,
+				roleText,
+				helpStyle.Render(msg.Content),
+			)
+
+			chatMessages = append(chatMessages, msgStyle.Width(m.width-6).Render(content))
 		}
 	}
 
+	// Processing indicator
 	if m.isProcessing {
-		chatContent.WriteString("[AI is thinking...]\n")
+		processingMsg := cardStyle.
+			Width(m.width - 6).
+			Render(m.spinner.View() + " " + infoStyle.Render("AI is thinking..."))
+		chatMessages = append(chatMessages, processingMsg)
 	}
 
-	chat := chatStyle.Render(chatContent.String())
+	// Update chat input
+	m.chatinput.SetValue(m.chatInput)
+	m.chatinput.Width = m.width - 10
 
-	// Render input box
-	input := inputStyle.Render(fmt.Sprintf("Message: %s█", m.chatInput))
+	inputBox := focusedInputStyle.
+		Width(m.width - 6).
+		Render(m.chatinput.View())
 
-	footer := "\nType your message • Enter: Send • Esc: Back"
+	// Help footer
+	helpKeys := []string{
+		renderKeyHelp("Type", "Message"),
+		renderKeyHelp("Enter", "Send"),
+		renderKeyHelp("Esc", "Back"),
+	}
+	footer := helpStyle.Render(strings.Join(helpKeys, " • "))
 
+	// Status message
+	statusMsg := ""
 	if m.errorMsg != "" {
-		errorStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FF6B6B")).
-			Padding(1, 0)
-		error := errorStyle.Render("⚠️  " + m.errorMsg)
-		return lipgloss.JoinVertical(lipgloss.Left, header, chat, input, error, footer)
+		statusMsg = errorStyle.Render("✗ " + m.errorMsg)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, chat, input, footer)
+	parts := []string{header, "", strings.Join(chatMessages, "\n"), "", inputBox}
+	if statusMsg != "" {
+		parts = append(parts, "", statusMsg)
+	}
+	parts = append(parts, footer)
+
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
 func (m UIModel) updateChat(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -571,6 +705,7 @@ func (m UIModel) updateChat(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.chatInput = ""
 		m.errorMsg = ""
 	case "enter":
+		m.chatInput = m.chatinput.Value()
 		if m.chatInput != "" && !m.isProcessing {
 			// Save user message
 			userMsg := m.chatInput
@@ -586,6 +721,7 @@ func (m UIModel) updateChat(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			})
 
 			m.chatInput = ""
+			m.chatinput.SetValue("")
 			m.isProcessing = true
 			m.errorMsg = ""
 
@@ -603,14 +739,8 @@ func (m UIModel) updateChat(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.isProcessing = false
 		}
-	case "backspace", "ctrl+h":
-		if len(m.chatInput) > 0 {
-			m.chatInput = m.chatInput[:len(m.chatInput)-1]
-		}
-	default:
-		if msg.Type == tea.KeyRunes && !m.isProcessing {
-			m.chatInput += msg.String()
-		}
 	}
+	// Sync chatInput with textinput value
+	m.chatInput = m.chatinput.Value()
 	return m, nil
 }

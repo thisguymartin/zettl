@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/log"
 )
@@ -19,6 +20,7 @@ type WindowType int
 const (
 	MainMenuWindow WindowType = iota
 	NoteListWindow
+	NoteViewWindow
 	NoteEditWindow
 	SearchWindow
 	ChatWindow
@@ -127,6 +129,8 @@ func (m UIModel) View() string {
 		return m.viewMainMenu()
 	case NoteListWindow:
 		return m.viewNoteList()
+	case NoteViewWindow:
+		return m.viewNoteView()
 	case NoteEditWindow:
 		return m.viewNoteEdit()
 	case SearchWindow:
@@ -175,6 +179,8 @@ func (m UIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateMainMenu(msg)
 		case NoteListWindow:
 			return m.updateNoteList(msg)
+		case NoteViewWindow:
+			return m.updateNoteView(msg)
 		case NoteEditWindow:
 			return m.updateNoteEdit(msg)
 		case SearchWindow:
@@ -257,7 +263,7 @@ func (m UIModel) updateNoteList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selectedNote = &m.filteredNotes[m.cursor]
 			m.noteTitle = m.selectedNote.Title
 			m.noteContent = m.selectedNote.Content
-			m.currentWindow = NoteEditWindow
+			m.currentWindow = NoteViewWindow
 		}
 	case "/":
 		m.currentWindow = SearchWindow
@@ -282,6 +288,39 @@ func (m UIModel) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Sync search query with textinput value and apply filter on every change
 	m.searchQuery = m.searchinput.Value()
 	m.applyFilter()
+	return m, nil
+}
+
+func (m UIModel) updateNoteView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c", "q":
+		return m, tea.Quit
+	case "esc":
+		m.currentWindow = NoteListWindow
+		m.selectedNote = nil
+	case "e":
+		// Switch to edit mode
+		if m.selectedNote != nil {
+			m.noteTitle = m.selectedNote.Title
+			m.noteContent = m.selectedNote.Content
+			m.currentWindow = NoteEditWindow
+		}
+	case "d":
+		// Delete note
+		if m.selectedNote != nil {
+			err := m.repo.Delete(m.selectedNote.ID)
+			if err != nil {
+				m.errorMsg = fmt.Sprintf("Failed to delete note: %v", err)
+			} else {
+				m.currentWindow = NoteListWindow
+				m.selectedNote = nil
+				// Reload notes
+				notes, _ := m.repo.GetAll()
+				m.notes = notes
+				m.filteredNotes = notes
+			}
+		}
+	}
 	return m, nil
 }
 
@@ -433,6 +472,44 @@ func (m UIModel) viewSearch() string {
 		searchBox,
 		"",
 		resultsText,
+		"",
+		footer,
+	)
+}
+
+func (m UIModel) viewNoteView() string {
+	if m.selectedNote == nil {
+		return "No note selected"
+	}
+
+	header := titleStyle.Render(m.selectedNote.Title)
+
+	// Render markdown using Glamour with proper terminal width
+	width := m.width
+	if width == 0 || width > 120 {
+		width = 80
+	}
+
+	renderer, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(width-4),
+	)
+
+	var rendered string
+	if err == nil {
+		rendered, err = renderer.Render(m.selectedNote.Content)
+	}
+
+	if err != nil {
+		rendered = m.selectedNote.Content // Fallback to plain text
+	}
+
+	footer := subtitleStyle.Render("e: edit • d: delete • Esc: back")
+
+	return lipgloss.JoinVertical(lipgloss.Left,
+		header,
+		"",
+		rendered,
 		"",
 		footer,
 	)

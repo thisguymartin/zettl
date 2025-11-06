@@ -11,6 +11,14 @@ type Note struct {
 	CreatedAt time.Time `db:"created_at"`
 	UpdatedAt time.Time `db:"updated_at"`
 	Tags      string    `db:"tags"`
+	Embedding string    `db:"embedding"` // JSON-encoded vector
+}
+
+type ChatMessage struct {
+	ID        int       `db:"id"`
+	Role      string    `db:"role"` // "user" or "assistant"
+	Content   string    `db:"content"`
+	CreatedAt time.Time `db:"created_at"`
 }
 
 type NoteRepository interface {
@@ -20,4 +28,9 @@ type NoteRepository interface {
 	Update(note *Note) error
 	Delete(id int) error
 	Search(query string) ([]Note, error)
+	UpdateEmbedding(noteID int, embedding string) error
+	GetNotesWithEmbeddings() ([]Note, error)
+	SaveChatMessage(role, content string) error
+	GetChatHistory(limit int) ([]ChatMessage, error)
+	ClearChatHistory() error
 }

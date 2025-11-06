@@ -18,6 +18,8 @@ const (
 	NoteListWindow
 	NoteEditWindow
 	SearchWindow
+	ChatWindow
+	AIMenuWindow
 )
 
 type UIModel struct {
@@ -32,6 +34,12 @@ type UIModel struct {
 	repo          NoteRepository
 	width         int
 	height        int
+	// AI-related fields
+	chatInput    string
+	chatHistory  []ChatMessage
+	isProcessing bool
+	errorMsg     string
+	aiService    interface{} // Will hold *ai.AIService
 }
 
 func NewUIModel(repo NoteRepository) (*UIModel, error) {
@@ -48,7 +56,13 @@ func NewUIModel(repo NoteRepository) (*UIModel, error) {
 		repo:          repo,
 		width:         80,
 		height:        24,
+		chatHistory:   []ChatMessage{},
 	}, nil
+}
+
+// SetAIService sets the AI service for the model
+func (m *UIModel) SetAIService(service interface{}) {
+	m.aiService = service
 }
 
 func (m UIModel) Init() tea.Cmd {
@@ -65,6 +79,10 @@ func (m UIModel) View() string {
 		return m.viewNoteEdit()
 	case SearchWindow:
 		return m.viewSearch()
+	case ChatWindow:
+		return m.viewChat()
+	case AIMenuWindow:
+		return m.viewAIMenu()
 	}
 	return ""
 }
@@ -85,6 +103,10 @@ func (m UIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateNoteEdit(msg)
 		case SearchWindow:
 			return m.updateSearch(msg)
+		case ChatWindow:
+			return m.updateChat(msg)
+		case AIMenuWindow:
+			return m.updateAIMenu(msg)
 		}
 	}
 	return m, nil
@@ -133,6 +155,9 @@ func (m UIModel) updateMainMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "3", "s":
 		m.currentWindow = SearchWindow
 		m.searchQuery = ""
+		m.cursor = 0
+	case "4", "a":
+		m.currentWindow = AIMenuWindow
 		m.cursor = 0
 	}
 	return m, nil
@@ -288,8 +313,9 @@ func (m UIModel) viewMainMenu() string {
 	menu := menuStyle.Render(`Welcome to your digital notebook!
 
 1. New Note (n)     - Create a new note
-2. List Notes (l)   - Browse existing notes  
+2. List Notes (l)   - Browse existing notes
 3. Search (s)       - Find notes with fuzzy search
+4. AI Features (a)  - Chat, embeddings, and semantic search
 
 Press the number or letter key to navigate.
 Press 'q' to quit.`)
@@ -403,4 +429,188 @@ func (m UIModel) viewNoteEdit() string {
 	footer := "\nCtrl+S: Save • Esc: Back • Enter: New line • Tab: Indent"
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, editor, footer)
+}
+
+func (m UIModel) viewAIMenu() string {
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#FAFAFA")).
+		Background(lipgloss.Color("#7D56F4")).
+		Padding(0, 2).
+		MarginBottom(1)
+
+	menuStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#00D9FF")).
+		Padding(1, 2).
+		MarginTop(1).
+		Align(lipgloss.Center)
+
+	header := headerStyle.Render("🤖 AI Features")
+
+	menu := menuStyle.Render(`AI-Powered Features:
+
+1. Chat (c)              - Chat with AI about your notes
+2. Generate Embeddings   - Create embeddings for semantic search
+3. Semantic Search       - Find similar notes using AI
+4. Clear Chat History    - Reset conversation
+
+Press the number or letter key to navigate.
+Press 'Esc' to go back.`)
+
+	if m.errorMsg != "" {
+		errorStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FF6B6B")).
+			Padding(1, 2)
+		error := errorStyle.Render("⚠️  " + m.errorMsg)
+		return lipgloss.JoinVertical(lipgloss.Left, header, menu, error)
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, header, menu)
+}
+
+func (m UIModel) updateAIMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.currentWindow = MainMenuWindow
+		m.errorMsg = ""
+	case "1", "c":
+		// Load chat history
+		if history, err := m.repo.GetChatHistory(50); err == nil {
+			m.chatHistory = history
+		}
+		m.currentWindow = ChatWindow
+		m.chatInput = ""
+		m.errorMsg = ""
+	case "2":
+		// Generate embeddings - to be implemented
+		m.errorMsg = "Embedding generation - coming soon!"
+	case "3":
+		// Semantic search - to be implemented
+		m.errorMsg = "Semantic search - coming soon!"
+	case "4":
+		// Clear chat history
+		if err := m.repo.ClearChatHistory(); err == nil {
+			m.chatHistory = []ChatMessage{}
+			m.errorMsg = "Chat history cleared!"
+		} else {
+			m.errorMsg = "Failed to clear chat history"
+		}
+	}
+	return m, nil
+}
+
+func (m UIModel) viewChat() string {
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#FAFAFA")).
+		Background(lipgloss.Color("#7D56F4")).
+		Padding(0, 2).
+		MarginBottom(1)
+
+	chatStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#00D9FF")).
+		Padding(1, 2).
+		Width(m.width - 4).
+		Height(m.height - 12)
+
+	inputStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#32CD32")).
+		Padding(1, 2).
+		Width(m.width - 4)
+
+	header := headerStyle.Render("💬 AI Chat")
+
+	// Render chat history
+	var chatContent strings.Builder
+	if len(m.chatHistory) == 0 {
+		chatContent.WriteString("No messages yet. Start a conversation!\n\n")
+		chatContent.WriteString("Tip: The AI has access to your notes for context.")
+	} else {
+		for _, msg := range m.chatHistory {
+			role := "You"
+			if msg.Role == "assistant" {
+				role = "AI"
+			}
+			chatContent.WriteString(fmt.Sprintf("[%s]: %s\n\n", role, msg.Content))
+		}
+	}
+
+	if m.isProcessing {
+		chatContent.WriteString("[AI is thinking...]\n")
+	}
+
+	chat := chatStyle.Render(chatContent.String())
+
+	// Render input box
+	input := inputStyle.Render(fmt.Sprintf("Message: %s█", m.chatInput))
+
+	footer := "\nType your message • Enter: Send • Esc: Back"
+
+	if m.errorMsg != "" {
+		errorStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FF6B6B")).
+			Padding(1, 0)
+		error := errorStyle.Render("⚠️  " + m.errorMsg)
+		return lipgloss.JoinVertical(lipgloss.Left, header, chat, input, error, footer)
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, header, chat, input, footer)
+}
+
+func (m UIModel) updateChat(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.currentWindow = AIMenuWindow
+		m.chatInput = ""
+		m.errorMsg = ""
+	case "enter":
+		if m.chatInput != "" && !m.isProcessing {
+			// Save user message
+			userMsg := m.chatInput
+			if err := m.repo.SaveChatMessage("user", userMsg); err != nil {
+				m.errorMsg = "Failed to save message"
+				return m, nil
+			}
+
+			// Add to history
+			m.chatHistory = append(m.chatHistory, ChatMessage{
+				Role:    "user",
+				Content: userMsg,
+			})
+
+			m.chatInput = ""
+			m.isProcessing = true
+			m.errorMsg = ""
+
+			// TODO: In a real implementation, this would call the AI service asynchronously
+			// For now, just add a placeholder response
+			response := "AI integration requires OpenAI API key. Please set OPENAI_API_KEY environment variable or configure it in ~/.zettl/config.json"
+
+			if err := m.repo.SaveChatMessage("assistant", response); err != nil {
+				m.errorMsg = "Failed to save AI response"
+			} else {
+				m.chatHistory = append(m.chatHistory, ChatMessage{
+					Role:    "assistant",
+					Content: response,
+				})
+			}
+			m.isProcessing = false
+		}
+	case "backspace", "ctrl+h":
+		if len(m.chatInput) > 0 {
+			m.chatInput = m.chatInput[:len(m.chatInput)-1]
+		}
+	default:
+		if msg.Type == tea.KeyRunes && !m.isProcessing {
+			m.chatInput += msg.String()
+		}
+	}
+	return m, nil
 }
